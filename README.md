@@ -255,7 +255,7 @@ The developers are not responsible for misuse of this software.
 ## 📧 Support
 
 If you encounter any issues or have questions:
-- Open an [issue](https://github.com/yourusername/telegram-video-downloader-bot/issues)
+- Open an [issue](https://github.com/ACHABH/telegram-video-downloader-bot/issues)
 - Check existing issues for solutions
 - Review the troubleshooting section above
 
