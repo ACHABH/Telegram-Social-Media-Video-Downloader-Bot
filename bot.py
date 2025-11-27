@@ -1,24 +1,24 @@
 """
 Telegram Social Media Video Downloader Bot
-Main application file handling Telegram bot interactions.
+Main application file handling Telegram bot interactions with interactive buttons.
 """
 
 import os
+import asyncio
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     filters,
     ContextTypes
 )
 
 from url_handler import URLHandler
-from preference_parser import PreferenceParser
-from response_formatter import ResponseFormatter
 from video_downloader import VideoDownloader
 
 
@@ -47,23 +47,21 @@ class TelegramBot:
         
         self.downloader = VideoDownloader(self.download_dir)
         self.url_handler = URLHandler()
-        self.preference_parser = PreferenceParser()
-        self.response_formatter = ResponseFormatter()
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command."""
         welcome_message = (
-            "🎥 *Telegram Social Media Video Downloader Bot*\n\n"
-            "Send me links from:\n"
-            "• YouTube\n"
-            "• Facebook\n"
-            "• X (Twitter)\n"
-            "• Instagram\n"
-            "• TikTok\n\n"
-            "*Usage:*\n"
-            "• Just send a link → Get download link\n"
-            "• Add 'send file' → Get video as file\n"
-            "• Add 'send link' → Get download link\n\n"
+            "🎥 *Telegram Social Media Video Downloader Bot*\\n\\n"
+            "Send me links from:\\n"
+            "• YouTube\\n"
+            "• Facebook\\n"
+            "• X (Twitter)\\n"
+            "• Instagram\\n"
+            "• TikTok\\n\\n"
+            "*Usage:*\\n"
+            "Just send a link - I'll download it and show you buttons to choose:\\n"
+            "• 📥 Get Link - Receive download link\\n"
+            "• 📹 Send Video - Get video in chat\\n\\n"
             "You can send multiple links at once!"
         )
         await update.message.reply_text(welcome_message, parse_mode='Markdown')
@@ -71,24 +69,19 @@ class TelegramBot:
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
         help_message = (
-            "*How to use:*\n\n"
-            "1. Send me a video URL from supported platforms\n"
-            "2. Optionally add 'send file' or 'send link'\n"
-            "3. I'll process and respond with JSON\n\n"
-            "*Examples:*\n"
-            "`https://youtube.com/watch?v=abc123`\n"
-            "`https://tiktok.com/@user/video/123 send file`\n"
-            "`https://instagram.com/p/abc send link`"
+            "*How to use:*\\n\\n"
+            "1. Send me a video URL from supported platforms\\n"
+            "2. Wait for download to complete\\n"
+            "3. Click a button to choose how to receive it\\n\\n"
+            "*Examples:*\\n"
+            "`https://youtube.com/watch?v=abc123`\\n"
+            "`https://tiktok.com/@user/video/123`\\n"
+            "`https://instagram.com/p/abc`"
         )
         await update.message.reply_text(help_message, parse_mode='Markdown')
     
     async def process_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """
-        Process incoming messages containing video URLs.
-        
-        Purpose: Extract URLs, download videos, and respond with structured JSON.
-        Required inputs: Message text containing at least one valid URL.
-        """
+        """Process incoming messages containing video URLs."""
         message_text = update.message.text
         logger.info(f"Processing message: {message_text[:100]}...")
         
@@ -106,8 +99,6 @@ class TelegramBot:
             f"⏳ Processing {len(urls)} link(s)..."
         )
         
-        results = []
-        
         # Process each URL
         for url_info in urls:
             url = url_info['url']
@@ -115,88 +106,120 @@ class TelegramBot:
             
             logger.info(f"Processing {platform} URL: {url}")
             
-            # Determine user preference
-            preference = self.preference_parser.parse_preference(message_text, url)
-            
             # Download video
             download_result = self.downloader.download_video(url, platform)
             
-            # Validation: Check if download succeeded
+            # Check if download succeeded
             if not download_result['success']:
                 logger.warning(f"Download failed for {url}: {download_result['error']}")
-                results.append(
-                    self.response_formatter.create_error_response(url, download_result['error'])
-                )
+                await update.message.reply_text(f"❌ Download failed: {download_result['error']}")
                 continue
             
-            # Handle based on preference
-            if preference == 'file':
-                # Upload as Telegram file
-                try:
-                    file_path = download_result['file_path']
-                    
-                    # Send video file to user
-                    with open(file_path, 'rb') as video_file:
-                        sent_message = await update.message.reply_video(
-                            video=video_file,
-                            caption=f"📹 {download_result.get('title', 'Video')}"
-                        )
-                    
-                    # Get file_id from sent message
-                    file_id = sent_message.video.file_id
-                    
-                    # Cleanup downloaded file
-                    self.downloader.cleanup_file(file_path)
-                    
-                    # Validation: Verify file was uploaded
-                    logger.info(f"File uploaded successfully: {file_id}")
-                    
-                    results.append(
-                        self.response_formatter.create_success_response(
-                            url, 'file', video_file=file_id
-                        )
-                    )
-                
-                except Exception as e:
-                    logger.error(f"File upload failed: {str(e)}")
-                    results.append(
-                        self.response_formatter.create_error_response(
-                            url, f"File upload failed: {str(e)}"
-                        )
-                    )
+            # Store file info for callback
+            file_path = download_result['file_path']
+            filename = Path(file_path).name
+            title = download_result.get('title', 'Video')
             
-            else:  # preference == 'link' (default)
-                # Generate download link
-                file_path = download_result['file_path']
-                filename = Path(file_path).name
-                
-                # Use web server URL if configured, otherwise use file path
-                if self.web_server_url:
-                    download_link = f"{self.web_server_url.rstrip('/')}/{filename}"
-                else:
-                    # For local testing, provide the file path
-                    # In production, this should be a proper web URL
-                    download_link = f"file:///{file_path}"
-                
-                # Validation: Verify link was generated
-                logger.info(f"Download link generated: {download_link}")
-                
-                results.append(
-                    self.response_formatter.create_success_response(
-                        url, 'link', download_link=download_link
-                    )
-                )
-        
-        # Format and send JSON response
-        json_response = self.response_formatter.format_response(results)
+            # Generate download link
+            if self.web_server_url:
+                download_link = f"{self.web_server_url.rstrip('/')}/{filename}"
+            else:
+                download_link = f"file:///{file_path}"
+            
+            # Create unique identifier for this download
+            video_id = filename.replace('.', '_').replace('-', '_')
+            
+            # Store in context for callback handler
+            if 'downloads' not in context.bot_data:
+                context.bot_data['downloads'] = {}
+            
+            context.bot_data['downloads'][video_id] = {
+                'file_path': file_path,
+                'download_link': download_link,
+                'title': title,
+                'url': url
+            }
+            
+            # Create inline keyboard with two options
+            keyboard = [
+                [
+                    InlineKeyboardButton("📥 Get Link", callback_data=f"link_{video_id}"),
+                    InlineKeyboardButton("📹 Send Video", callback_data=f"file_{video_id}")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            # Send message with buttons
+            await update.message.reply_text(
+                f"✅ Downloaded: {title}\\n\\nChoose how to receive:",
+                reply_markup=reply_markup
+            )
         
         # Delete processing message
         await processing_msg.delete()
         
-        # Send JSON response
-        await update.message.reply_text(f"```json\n{json_response}\n```", parse_mode='Markdown')
+        logger.info(f"Completed processing {len(urls)} URLs")
+    
+    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle button clicks."""
+        query = update.callback_query
+        await query.answer()  # Acknowledge the button click
         
-        logger.info(f"Completed processing {len(results)} URLs")
+        # Parse callback data
+        try:
+            action, video_id = query.data.split('_', 1)
+        except ValueError:
+            await query.edit_message_text("❌ Error: Invalid button data.")
+            return
+        
+        # Retrieve stored data
+        if 'downloads' not in context.bot_data or video_id not in context.bot_data['downloads']:
+            await query.edit_message_text("❌ Error: Video data expired. Please download again.")
+            return
+        
+        video_data = context.bot_data['downloads'][video_id]
+        file_path = video_data['file_path']
+        download_link = video_data['download_link']
+        title = video_data['title']
+        
+        if action == 'link':
+            # User wants the download link
+            await query.edit_message_text(
+                f"📥 Download Link for: {title}\\n\\n{download_link}",
+                disable_web_page_preview=True
+            )
+            logger.info(f"Sent download link for {video_id}")
+        
+        elif action == 'file':
+            # User wants the video file
+            await query.edit_message_text(f"⏳ Uploading video...")
+            
+            try:
+                # Upload video to chat
+                with open(file_path, 'rb') as video_file:
+                    await query.message.reply_video(
+                        video=video_file,
+                        caption=f"📹 {title}",
+                        read_timeout=60,
+                        write_timeout=60,
+                        connect_timeout=30,
+                        pool_timeout=30
+                    )
+                
+                # Update message to show success
+                await query.edit_message_text(f"✅ Video uploaded: {title}")
+                logger.info(f"Uploaded video file for {video_id}")
+                
+                # Cleanup
+                self.downloader.cleanup_file(file_path)
+                
+            except Exception as e:
+                logger.error(f"Video upload failed: {str(e)}")
+                await query.edit_message_text(f"❌ Upload failed: {str(e)}")
+        
+        # Clean up stored data
+        if video_id in context.bot_data['downloads']:
+            del context.bot_data['downloads'][video_id]
     
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle errors."""
@@ -213,6 +236,7 @@ class TelegramBot:
         application.add_handler(CommandHandler("start", self.start_command))
         application.add_handler(CommandHandler("help", self.help_command))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.process_message))
+        application.add_handler(CallbackQueryHandler(self.button_callback))  # Handle button clicks
         
         # Register error handler
         application.add_error_handler(self.error_handler)
@@ -225,6 +249,10 @@ class TelegramBot:
 def main():
     """Main entry point."""
     try:
+        # Create and set event loop for Python 3.14+ compatibility
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         bot = TelegramBot()
         bot.run()
     except ValueError as e:
@@ -232,6 +260,11 @@ def main():
         logger.error("Please create a .env file with TELEGRAM_BOT_TOKEN")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
+    finally:
+        try:
+            loop.close()
+        except:
+            pass
 
 
 if __name__ == '__main__':

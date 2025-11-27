@@ -40,19 +40,14 @@ class VideoDownloader:
         """
         try:
             # Configure yt-dlp options
+            # NOTE: NOT specifying 'format' to let yt-dlp auto-select the best available
+            # This avoids "Requested format is not available" errors
             ydl_opts = {
-                'format': 'best[ext=mp4]/best',  # Prefer mp4
                 'outtmpl': str(self.download_dir / '%(id)s.%(ext)s'),
                 'quiet': True,
                 'no_warnings': True,
                 'extract_flat': False,
             }
-            
-            # Platform-specific configurations
-            if platform == 'tiktok':
-                ydl_opts['format'] = 'best'
-            elif platform == 'instagram':
-                ydl_opts['format'] = 'best'
             
             # Download the video
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
