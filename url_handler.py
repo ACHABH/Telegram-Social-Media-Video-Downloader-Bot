@@ -21,6 +21,8 @@ class URLHandler:
         'facebook': [
             r'(?:https?://)?(?:www\.)?facebook\.com/.*?/videos/\d+',
             r'(?:https?://)?(?:www\.)?fb\.watch/[\w-]+',
+            r'(?:https?://)?(?:www\.)?facebook\.com/share/r/[\w-]+',
+            r'(?:https?://)?(?:www\.)?facebook\.com/share/v/[\w-]+',
         ],
         'twitter': [
             r'(?:https?://)?(?:www\.)?twitter\.com/\w+/status/\d+',
